@@ -2,6 +2,15 @@ import requests
 import pandas as pd
 import os
 import json
+import logging
+
+# Create and configure logger
+logging.basicConfig(filename="logs/extract-products.log",
+                    format='%(asctime)s %(message)s',
+                    filemode='w')
+
+# Creating an object
+logger = logging.getLogger('extract-products')
 
 # =====================
 # CONFIG
@@ -81,7 +90,7 @@ while has_next_page:
     data = response.json()
     
     if "errors" in data:
-        print(f"❌ Erreur GraphQL: {data['errors']}")
+        logger.info(f"❌ Erreur GraphQL: {data['errors']}")
         break
     
     products_data = data["data"]["products"]
@@ -90,7 +99,7 @@ while has_next_page:
     has_next_page = products_data["pageInfo"]["hasNextPage"]
     after_cursor = products_data["pageInfo"]["endCursor"]
     
-    print(f"Récupéré {len(all_products)} produits...")
+    logger.info(f"Récupéré {len(all_products)} produits...")
 
 # Save raw JSON data
 with open("data/shopify_products_raw.json", "w") as f:
@@ -134,4 +143,4 @@ df = pd.DataFrame(products)
 # =====================
 df.to_csv("data/shopify_products.csv", index=False)
 
-print(f"✅ Export terminé : shopify_products.csv ({len(df)} variantes)")
+logger.info(f"✅ Export terminé : shopify_products.csv ({len(df)} variantes)")

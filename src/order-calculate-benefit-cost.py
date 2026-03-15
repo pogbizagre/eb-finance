@@ -1,4 +1,14 @@
 import pandas as pd
+import logging
+
+# Create and configure logger
+logging.basicConfig(filename="logs/order-cost-benefit.log",
+                    format='%(asctime)s %(message)s',
+                    filemode='w')
+
+# Creating an object
+logger = logging.getLogger('order-cost-benefit')
+
 
 # =====================
 # LOAD DATA
@@ -6,8 +16,8 @@ import pandas as pd
 orders_df = pd.read_csv("data/shopify_orders.csv")
 products_df = pd.read_csv("data/shopify_products.csv")
 
-print("📊 Orders shape:", orders_df.shape)
-print("📊 Products shape:", products_df.shape)
+logger.info("📊 Orders shape:", orders_df.shape)
+logger.info("📊 Products shape:", products_df.shape)
 
 # =====================
 # JOIN ORDERS WITH PRODUCTS
@@ -19,10 +29,10 @@ merged_df = orders_df.merge(
     how='left'
 )
 
-print(f"✅ Merged shape: {merged_df.shape}")
+logger.info(f"✅ Merged shape: {merged_df.shape}")
 
 merged_df.to_csv("data/shopify_orders_detailed.csv", index=False)
-print(f"✅ Export terminé : shopify_orders_detailed.csv")
+logger.info(f"✅ Export terminé : shopify_orders_detailed.csv")
 
 # =====================
 # CALCULATE COSTS & PROFIT BY ORDER
@@ -58,11 +68,11 @@ order_summary = order_summary[['order_number', 'order_dt','revenue', 'total_cost
 # EXPORT
 # =====================
 order_summary.to_csv("data/shopify_orders_with_profit.csv", index=False)
-print(f"\n✅ Export terminé : shopify_orders_with_profit.csv")
+logger.info(f"\n✅ Export terminé : shopify_orders_with_profit.csv")
 
-print(f"\n📈 Résumé des commandes:")
-print(order_summary.head(10))
-print(f"\n💰 Total revenue: {order_summary['revenue'].sum():.2f}")
-print(f"💰 Total cost: {order_summary['total_cost'].sum():.2f}")
-print(f"💰 Total benefit: {order_summary['benefit'].sum():.2f}")
-print(f"📊 Average profit margin: {order_summary['profit_margin_%'].mean():.2f}%")
+logger.info(f"\n📈 Résumé des commandes:")
+logger.info(order_summary.head(10))
+logger.info(f"\n💰 Total revenue: {order_summary['revenue'].sum():.2f}")
+logger.info(f"💰 Total cost: {order_summary['total_cost'].sum():.2f}")
+logger.info(f"💰 Total benefit: {order_summary['benefit'].sum():.2f}")
+logger.info(f"📊 Average profit margin: {order_summary['profit_margin_%'].mean():.2f}%")
