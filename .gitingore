@@ -1,6 +1,6 @@
 # Virtual Environment
 .venv/
-venv/
+*venv*/
 env/
 
 # Python Bytecode
@@ -15,9 +15,9 @@ __pycache__/
 *.swo
 
 #Logs files
-logs/
+logs/*
 
 # Data saved
 data/
 
-env.bash
+*env.bash

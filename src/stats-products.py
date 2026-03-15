@@ -1,7 +1,15 @@
 import pandas as pd
 import logging
 import re
-import re
+
+# Create and configure logger
+logging.basicConfig(filename="logs/stats-products.log",
+                    format='%(asctime)s %(message)s',
+                    filemode='w')
+
+# Creating an object
+logger = logging.getLogger('stats-products')
+
 
 # =====================
 # SETUP LOGGING
