@@ -1,1 +1,0 @@
-export SHOPIFY_TOKEN="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"
