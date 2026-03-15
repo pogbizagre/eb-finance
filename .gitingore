@@ -15,7 +15,7 @@ __pycache__/
 *.swo
 
 #Logs files
-logs/*
+logs/
 
 # Data saved
 data/
