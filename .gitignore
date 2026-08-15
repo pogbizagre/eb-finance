@@ -21,3 +21,4 @@ logs/
 data/
 
 env.bash
+env.ps1
