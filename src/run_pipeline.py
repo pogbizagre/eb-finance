@@ -24,6 +24,7 @@ STEPS = [
     "order-calculate-benefit-cost.py",
     "download-images.py",
     "update-stock-status.py",
+    'publish-stock-status.py',
 ]
 
 

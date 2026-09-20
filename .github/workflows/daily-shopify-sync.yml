@@ -1,0 +1,50 @@
+name: Sync Shopify vers Snowflake
+
+on:
+  schedule:
+    # Tous les jours à 6h00 UTC (= 2h00 heure de Montréal en hiver, 3h00 en été)
+    # Ajuste l'heure selon tes préférences : https://crontab.guru
+    - cron: "0 6 * * *"
+  workflow_dispatch: # permet aussi de le lancer manuellement depuis l'onglet Actions
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: eb_finance/src
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: |
+          pip install pandas requests "snowflake-connector-python[pandas]"
+
+      - name: Extraire les commandes Shopify
+        env:
+          SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+        run: python extract-orders.py
+
+      - name: Extraire les produits Shopify
+        env:
+          SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
+          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+        run: python extract-products.py
+
+      - name: Charger dans Snowflake
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_SHOPIFY_DATABASE: SHOPIFY
+          SNOWFLAKE_SHOPIFY_SCHEMA: PUBLIC
+        run: python load-shopify-to-snowflake.py

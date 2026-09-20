@@ -9,6 +9,8 @@ Suppose que data/shopify_products.csv est à jour (lancer extract-products.py
 avant, si besoin). À exécuter depuis la racine du dépôt.
 """
 
+from datetime import datetime
+
 import pandas as pd
 from utils import setup_logger, add_size_standard, categorize_products, SHOE_CATEGORIES
 
@@ -18,10 +20,13 @@ OUTPUT_CSV = "data/stock_status_preview.csv"
 logger = setup_logger('update-stock-status', 'update-stock-status.log')
 
 
-def format_stock_sentence(sizes_qty):
-    """sizes_qty : liste de (size_standard, qty) triée par pointure, qty > 0 uniquement."""
+def format_stock_sentence(sizes_qty, generated_at=None):
+    """sizes_qty : liste de (size_standard, qty) triée par pointure, qty > 0 uniquement.
+    generated_at : datetime à utiliser comme horodatage (par défaut : maintenant)."""
+    timestamp = (generated_at or datetime.now()).strftime("%d/%m/%Y à %H:%M")
+
     if not sizes_qty:
-        return "Actuellement en rupture de stock."
+        return f"Actuellement en rupture de stock. (mis à jour le {timestamp})"
 
     parts = [
         f"pointure {size} ({int(qty)} unité{'s' if qty > 1 else ''})"
@@ -29,9 +34,11 @@ def format_stock_sentence(sizes_qty):
     ]
 
     if len(parts) == 1:
-        return f"Disponible en {parts[0]}."
+        sentence = f"Disponible en {parts[0]}."
+    else:
+        sentence = "Disponible en " + ", ".join(parts[:-1]) + f" et {parts[-1]}."
 
-    return "Disponible en " + ", ".join(parts[:-1]) + f" et {parts[-1]}."
+    return f"{sentence} (mis à jour le {timestamp})"
 
 
 def main():
@@ -41,6 +48,8 @@ def main():
 
     products_df = add_size_standard(products_df)
     products_df = categorize_products(products_df)
+    
+    products_df.to_csv("inspect_product.csv", index=False, encoding="utf-8")
 
     is_active = products_df['product_status'].isin(['ACTIVE'])
     is_shoe = products_df['product_category'].isin(SHOE_CATEGORIES)
@@ -57,6 +66,7 @@ def main():
             .sum()
             .reset_index()
         )
+        # stock_by_size.head()
         stock_by_size = stock_by_size[stock_by_size['variant_inventory_qty'] > 0]
         stock_by_size = stock_by_size.sort_values(
             by='size_standard', key=lambda col: col.astype(float)

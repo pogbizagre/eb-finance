@@ -111,20 +111,29 @@ def get_access_token():
     return _token
 
 
-def shopify_graphql(query, max_retries=5):
-    """Exécute une requête GraphQL Shopify. Relance automatiquement si Shopify
-    répond avec un throttling au niveau du coût de la requête (HTTP 200 avec
-    une erreur GraphQL de code THROTTLED — non couvert par le retry HTTP de la
-    Session, qui ne regarde que le status code)."""
+def shopify_graphql(query, variables=None, max_retries=5):
+    """Exécute une requête (ou mutation) GraphQL Shopify. `variables` est le
+    dict standard GraphQL — à utiliser dès que la requête transporte du texte
+    libre (HTML, accents, guillemets...) pour éviter tout souci d'échappement
+    dans la chaîne de la requête elle-même.
+
+    Relance automatiquement si Shopify répond avec un throttling au niveau du
+    coût de la requête (HTTP 200 avec une erreur GraphQL de code THROTTLED —
+    non couvert par le retry HTTP de la Session, qui ne regarde que le status
+    code)."""
     headers = {
         "X-Shopify-Access-Token": get_access_token(),
         "Content-Type": "application/json",
     }
 
+    payload = {"query": query}
+    if variables is not None:
+        payload["variables"] = variables
+
     response = None
     for attempt in range(max_retries):
         response = _session.post(
-            GRAPHQL_URL, json={"query": query}, headers=headers, timeout=REQUEST_TIMEOUT
+            GRAPHQL_URL, json=payload, headers=headers, timeout=REQUEST_TIMEOUT
         )
 
         try:
@@ -222,6 +231,8 @@ _EXCLUDED_TAG_PATTERNS = [
     re.compile(r'arrivage_\d{4}[-_]\d{2}'),
     re.compile(r'liquidation_\d{4}[-_]\d{2}'),
     re.compile(r'size-\d{2}'),
+    re.compile(r'liquidation'),
+    re.compile(r'nouvelle_collection'),
 ]
 
 
