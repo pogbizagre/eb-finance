@@ -1,0 +1,48 @@
+name: Publier le statut de stock Shopify
+
+on:
+  schedule:
+    # Toutes les heures, à la 15e minute (décalé de l'heure pile pour éviter
+    # la congestion des runners GitHub à :00). Ajuste si besoin.
+    - cron: "15 * * * *"
+  workflow_dispatch: # permet aussi de le lancer manuellement depuis l'onglet Actions
+
+jobs:
+  publish-stock-status:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
+    env:
+      # Uniquement les identifiants Shopify — ce pipeline ne touche jamais à
+      # Snowflake (extract-products.py --full bypass complètement cette
+      # connexion), donc aucun secret Snowflake nécessaire ici.
+      SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+      SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install pandas requests
+
+      - name: Extraire le catalogue complet (chaussures + stock)
+        run: python extract-products.py --full
+
+      - name: Générer les phrases de stock
+        run: python update-stock-status.py
+
+      - name: Publier sur Shopify
+        run: python publish-stock-status.py
+
+      - name: Conserver les logs (débogage, 7 jours)
+        if: always() # garde les logs même si une étape a échoué
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-status-logs-${{ github.run_id }}
+          path: src/logs/
+          retention-days: 7

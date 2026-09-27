@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd
 import os
 import json
@@ -11,10 +12,29 @@ from utils import (
 )
 
 # =====================
+# OPTIONS EN LIGNE DE COMMANDE
+# =====================
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--full",
+    action="store_true",
+    help=(
+        "Ignore le watermark Snowflake et force une extraction complète du "
+        "catalogue, sans se connecter à Snowflake du tout. Utilisé par le "
+        "pipeline de statut de stock (update-stock-status.py), qui a besoin "
+        "du catalogue entier à chaque run : une variation de stock ne met "
+        "pas forcément à jour le updatedAt du produit côté Shopify, donc "
+        "l'extraction incrémentale (celle utilisée pour Snowflake) manquerait "
+        "des changements de stock sur des produits par ailleurs inchangés."
+    ),
+)
+args = parser.parse_args()
+
+# =====================
 # SETUP DOSSIERS / LOGGING
 # =====================
 os.makedirs("data", exist_ok=True)
-logger = setup_logger('extract-orders', 'extract-orders.log')
+logger = setup_logger('extract-products', 'extract-products.log')
 
 check_credentials()
 
@@ -22,118 +42,133 @@ check_credentials()
 EXTRACTION_DATE = datetime.now(timezone.utc).isoformat()
 
 # =====================
-# INCRÉMENTAL : watermark = MAX(ORDER_UPDATED_AT) déjà chargé dans Snowflake.
-# On ne redemande à Shopify que les commandes créées OU modifiées depuis ce
-# point (statut changé, remboursement, etc.). Si la table est vide (premier
-# run), get_snowflake_watermark retombe sur 1970-01-01 -> extraction complète.
+# INCRÉMENTAL (défaut) : watermark = MAX(PRODUCT_UPDATED_AT) déjà chargé dans
+# Snowflake. On ne redemande à Shopify que les produits créés OU modifiés
+# depuis ce point. Si la table est vide (premier run), get_snowflake_watermark
+# retombe sur 1970-01-01 -> extraction complète.
+#
+# --full : bypass total, ni watermark ni connexion Snowflake (le pipeline
+# stock n'a pas besoin de Snowflake du tout).
 # =====================
-_conn = get_snowflake_connection()
-try:
-    WATERMARK = get_snowflake_watermark(_conn, "SHOPIFY_ORDER_LINE_ITEMS", "ORDER_UPDATED_AT")
-finally:
-    _conn.close()
-logger.info(f"Watermark de départ : {WATERMARK}")
+if args.full:
+    WATERMARK = "1970-01-01T00:00:00Z"
+    logger.info("Mode --full : extraction complète, watermark ignoré (aucune connexion Snowflake)")
+else:
+    _conn = get_snowflake_connection()
+    try:
+        WATERMARK = get_snowflake_watermark(_conn, "SHOPIFY_PRODUCT_VARIANTS", "PRODUCT_UPDATED_AT")
+    finally:
+        _conn.close()
+    logger.info(f"Watermark de départ : {WATERMARK}")
 
-# status:any est nécessaire car par défaut Shopify exclut certains statuts
-# (ex: annulées/archivées) des résultats de la connexion orders().
-ORDERS_FILTER = f"status:any updated_at:>='{WATERMARK}'"
+PRODUCTS_FILTER = f"updated_at:>='{WATERMARK}'"
 
 # Fragment de champs partagé entre la requête principale et le backfill, pour
-# éviter que les deux listes de champs divergent (voir fetch_remaining_line_items).
-LINE_ITEM_FIELDS = """
-                  id
-                  title
-                  quantity
-                  originalUnitPriceSet {
-                    shopMoney {
-                      amount
-                    }
-                  }
-                  variant {
-                    id
-                    title
-                  }
+# éviter que les deux listes de champs divergent (voir fetch_remaining_variants).
+VARIANT_FIELDS = """
+              id
+              title
+              sku
+              price
+              compareAtPrice
+              inventoryQuantity
+              inventoryItem {
+                unitCost {
+                  amount
+                }
+              }
 """
 
 # =====================
-# FETCH ORDERS (créées ou modifiées depuis le watermark), AVEC PAGINATION
+# FETCH PRODUCTS (créés ou modifiés depuis le watermark), AVEC PAGINATION
 # =====================
-all_orders = []
+all_products = []
 has_next_page = True
 after_cursor = None
 
 while has_next_page:
-    query = f"""
-    {{
-      orders(first: 250, after: {f'"{after_cursor}"' if after_cursor else 'null'}, query: "{ORDERS_FILTER}") {{
-        edges {{
-          node {{
-            id
-            name
-            createdAt
-            updatedAt
-            totalPriceSet {{
-              shopMoney {{
-                amount
-                currencyCode
-              }}
-            }}
-            lineItems(first: 50) {{
-              edges {{
-                node {{
-{LINE_ITEM_FIELDS}
-                }}
-              }}
-              pageInfo {{
-                hasNextPage
-                endCursor
-              }}
+
+    query = f"""{{
+  products(first: 250, after: {f'"{after_cursor}"' if after_cursor else 'null'}, query: "{PRODUCTS_FILTER}") {{
+    edges {{
+      node {{
+        id
+        title
+        handle
+        createdAt
+        updatedAt
+        vendor
+        productType
+        status
+        tags
+        images(first: 1) {{
+          edges {{
+            node {{
+              url
             }}
           }}
         }}
-        pageInfo {{
-          hasNextPage
-          endCursor
+        variants(first: 100) {{
+          edges {{
+            node {{
+{VARIANT_FIELDS}
+            }}
+          }}
+          pageInfo {{
+            hasNextPage
+            endCursor
+          }}
         }}
       }}
     }}
-    """
+    pageInfo {{
+      hasNextPage
+      endCursor
+    }}
+  }}
+}}
+"""
 
+    logger.info('Querying Shopify...')
     response = shopify_graphql(query)
 
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError:
+        logger.info(f'Response is not JSON: {response.text}')
+        logger.info(f"❌ Non-JSON response: {response.status_code} {response.text}")
+        break
 
     if "errors" in data:
         logger.info(f"❌ Erreur GraphQL: {data['errors']}")
         break
 
-    orders_data = data["data"]["orders"]
-    all_orders.extend(orders_data["edges"])
+    products_data = data["data"]["products"]
+    all_products.extend(products_data["edges"])
 
-    has_next_page = orders_data["pageInfo"]["hasNextPage"]
-    after_cursor = orders_data["pageInfo"]["endCursor"]
+    has_next_page = products_data["pageInfo"]["hasNextPage"]
+    after_cursor = products_data["pageInfo"]["endCursor"]
 
-    logger.info(f"Récupéré {len(all_orders)} commandes...")
+    logger.info(f"Récupéré {len(all_products)} produits...")
 
 # =====================
-# BACKFILL TRUNCATED LINE ITEMS
+# BACKFILL TRUNCATED VARIANTS
 # =====================
-# lineItems is capped at 50 per order above (Shopify's nested connection cost
-# grows with orders_first * lineItems_first, so we can't just request everyone's
-# line items in one shot). Any order with more than 50 line items gets flagged
-# via pageInfo.hasNextPage; fetch the rest one order at a time.
+# variants is capped at 100 per product above (same nested-cost constraint as
+# lineItems in extract-orders.py). Any product with more than 100 variants gets
+# flagged via pageInfo.hasNextPage; fetch the rest one product at a time.
 
-def fetch_remaining_line_items(order_gid, after_cursor):
-    """Paginate the remaining lineItems for a single order (cheap: one order at a time)."""
+def fetch_remaining_variants(product_gid, after_cursor):
+    """Paginate the remaining variants for a single product (cheap: one product at a time)."""
     edges = []
     while True:
         query = f"""
         {{
-          order(id: "{order_gid}") {{
-            lineItems(first: 250, after: {f'"{after_cursor}"' if after_cursor else 'null'}) {{
+          product(id: "{product_gid}") {{
+            variants(first: 250, after: {f'"{after_cursor}"' if after_cursor else 'null'}) {{
               edges {{
                 node {{
-{LINE_ITEM_FIELDS}
+{VARIANT_FIELDS}
                 }}
               }}
               pageInfo {{
@@ -147,75 +182,80 @@ def fetch_remaining_line_items(order_gid, after_cursor):
         response = shopify_graphql(query)
         data = response.json()
 
-        if "errors" in data or not data.get("data", {}).get("order"):
-            logger.info(f"❌ Échec récupération des line items restants pour {order_gid}: {data.get('errors', data)}")
+        if "errors" in data or not data.get("data", {}).get("product"):
+            logger.info(f"❌ Échec récupération des variantes restantes pour {product_gid}: {data.get('errors', data)}")
             break
 
-        line_items = data["data"]["order"]["lineItems"]
-        edges.extend(line_items["edges"])
+        variants = data["data"]["product"]["variants"]
+        edges.extend(variants["edges"])
 
-        if not line_items["pageInfo"]["hasNextPage"]:
+        if not variants["pageInfo"]["hasNextPage"]:
             break
-        after_cursor = line_items["pageInfo"]["endCursor"]
+        after_cursor = variants["pageInfo"]["endCursor"]
 
     return edges
 
 
-truncated_orders = [
-    edge for edge in all_orders
-    if edge["node"]["lineItems"]["pageInfo"]["hasNextPage"]
+truncated_products = [
+    edge for edge in all_products
+    if edge["node"]["variants"]["pageInfo"]["hasNextPage"]
 ]
 
-if truncated_orders:
-    logger.info(f"⚠️ {len(truncated_orders)} commande(s) avec plus de 50 articles, récupération des articles restants...")
-    for edge in truncated_orders:
-        order = edge["node"]
-        extra_edges = fetch_remaining_line_items(
-            order["id"], order["lineItems"]["pageInfo"]["endCursor"]
+if truncated_products:
+    logger.info(f"⚠️ {len(truncated_products)} produit(s) avec plus de 100 variantes, récupération des variantes restantes...")
+    for edge in truncated_products:
+        product = edge["node"]
+        extra_edges = fetch_remaining_variants(
+            product["id"], product["variants"]["pageInfo"]["endCursor"]
         )
-        order["lineItems"]["edges"].extend(extra_edges)
-        logger.info(f"  ↳ {order['name']}: +{len(extra_edges)} articles récupérés")
+        product["variants"]["edges"].extend(extra_edges)
+        logger.info(f"  ↳ {product['title']}: +{len(extra_edges)} variantes récupérées")
 
-# Save raw JSON data (uniquement les commandes touchées par ce run incrémental)
-with open("data/shopify_orders_raw.json", "w", encoding="utf-8") as f:
-    json.dump({"orders": all_orders}, f, indent=2, ensure_ascii=False)
+# Save raw JSON data (uniquement les produits touchés par ce run incrémental)
+with open("data/shopify_products_raw.json", "w", encoding="utf-8") as f:
+    json.dump({"products": all_products}, f, indent=2, ensure_ascii=False)
 
 # =====================
 # TRANSFORMATION
 # =====================
-orders = []
+products = []
 
-for edge in all_orders:
-    order = edge["node"]
+for edge in all_products:
+    product = edge["node"]
 
-    total_price = float(order["totalPriceSet"]["shopMoney"]["amount"])
+    # Iterate through variants
+    for variant_edge in product.get("variants", {}).get("edges", []):
+        variant = variant_edge["node"]
 
-    for line_item_edge in order["lineItems"]["edges"]:
-        line_item = line_item_edge["node"]
-        item_id = line_item["id"].split('/')[-1]
-        item_title = line_item["title"]
-        item_qty = line_item["quantity"]
-        item_price = float(line_item["originalUnitPriceSet"]["shopMoney"]["amount"])
-        item_variant_id = line_item["variant"]["id"].split('/')[-1] if line_item.get("variant") else None
+        inventory_item = variant.get("inventoryItem", {})
+        unit_cost = inventory_item.get("unitCost", {}).get("amount") if inventory_item else None
 
-        orders.append({
+        first_image_edges = product.get("images", {}).get("edges", [])
+        first_image_url = first_image_edges[0]["node"]["url"] if first_image_edges else None
+
+        products.append({
             "extraction_date": EXTRACTION_DATE,
-            "order_number": order["name"],
-            "order_dt": pd.to_datetime(order["createdAt"]).date(),
-            "order_updated_at": order["updatedAt"],  # watermark pour le prochain run incrémental
-            "order_total_price": total_price,
-            "item_id" : item_id,
-            "item_title" : item_title,
-            "item_qty" : item_qty,
-            "item_price" : item_price,
-            "item_variant_id" : item_variant_id,
+            "product_id": product["id"].split('/')[-1],
+            "product_title": product["title"],
+            "product_handle": product["handle"],
+            "product_created_at": pd.to_datetime(product["createdAt"]).date(),
+            "product_updated_at": product["updatedAt"],  # watermark pour le prochain run incrémental
+            "product_type": product.get("productType"),
+            "product_status": product.get("status"),
+            "product_tags": ", ".join(product.get("tags", [])),
+            "product_image_url": first_image_url,
+            "variant_id": variant["id"].split('/')[-1],
+            "variant_title": variant.get("title"),
+            "variant_cost": unit_cost,
+            "variant_price": variant.get("price"),
+            "variant_inventory_qty": variant.get("inventoryQuantity"),
         })
 
-df = pd.DataFrame(orders)
+df = pd.DataFrame(products)
 
 # =====================
 # EXPORT
 # =====================
-df.to_csv("data/shopify_orders.csv", index=False, encoding="utf-8")
+df.to_csv("data/shopify_products.csv", index=False, encoding="utf-8")
 
-logger.info(f"✅ Export terminé : shopify_orders.csv ({len(df)} lignes, depuis {WATERMARK})")
+logger.info(f"✅ Export terminé : shopify_products.csv ({len(df)} lignes, depuis {WATERMARK})")
