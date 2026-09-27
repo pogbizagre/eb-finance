@@ -2,7 +2,13 @@ import pandas as pd
 import os
 import json
 from datetime import datetime, timezone
-from utils import setup_logger, check_credentials, shopify_graphql
+from utils import (
+    setup_logger,
+    check_credentials,
+    shopify_graphql,
+    get_snowflake_connection,
+    get_snowflake_watermark,
+)
 
 # =====================
 # SETUP DOSSIERS / LOGGING
@@ -14,6 +20,23 @@ check_credentials()
 
 # Horodatage unique de l'extraction, appliqué à toutes les lignes
 EXTRACTION_DATE = datetime.now(timezone.utc).isoformat()
+
+# =====================
+# INCRÉMENTAL : watermark = MAX(ORDER_UPDATED_AT) déjà chargé dans Snowflake.
+# On ne redemande à Shopify que les commandes créées OU modifiées depuis ce
+# point (statut changé, remboursement, etc.). Si la table est vide (premier
+# run), get_snowflake_watermark retombe sur 1970-01-01 -> extraction complète.
+# =====================
+_conn = get_snowflake_connection()
+try:
+    WATERMARK = get_snowflake_watermark(_conn, "SHOPIFY_ORDER_LINE_ITEMS", "ORDER_UPDATED_AT")
+finally:
+    _conn.close()
+logger.info(f"Watermark de départ : {WATERMARK}")
+
+# status:any est nécessaire car par défaut Shopify exclut certains statuts
+# (ex: annulées/archivées) des résultats de la connexion orders().
+ORDERS_FILTER = f"status:any updated_at:>='{WATERMARK}'"
 
 # Fragment de champs partagé entre la requête principale et le backfill, pour
 # éviter que les deux listes de champs divergent (voir fetch_remaining_line_items).
@@ -33,7 +56,7 @@ LINE_ITEM_FIELDS = """
 """
 
 # =====================
-# FETCH ALL ORDERS WITH PAGINATION
+# FETCH ORDERS (créées ou modifiées depuis le watermark), AVEC PAGINATION
 # =====================
 all_orders = []
 has_next_page = True
@@ -42,12 +65,13 @@ after_cursor = None
 while has_next_page:
     query = f"""
     {{
-      orders(first: 250, after: {f'"{after_cursor}"' if after_cursor else 'null'}) {{
+      orders(first: 250, after: {f'"{after_cursor}"' if after_cursor else 'null'}, query: "{ORDERS_FILTER}") {{
         edges {{
           node {{
             id
             name
             createdAt
+            updatedAt
             totalPriceSet {{
               shopMoney {{
                 amount
@@ -152,7 +176,7 @@ if truncated_orders:
         order["lineItems"]["edges"].extend(extra_edges)
         logger.info(f"  ↳ {order['name']}: +{len(extra_edges)} articles récupérés")
 
-# Save raw JSON data
+# Save raw JSON data (uniquement les commandes touchées par ce run incrémental)
 with open("data/shopify_orders_raw.json", "w", encoding="utf-8") as f:
     json.dump({"orders": all_orders}, f, indent=2, ensure_ascii=False)
 
@@ -163,7 +187,7 @@ orders = []
 
 for edge in all_orders:
     order = edge["node"]
-    
+
     total_price = float(order["totalPriceSet"]["shopMoney"]["amount"])
 
     for line_item_edge in order["lineItems"]["edges"]:
@@ -173,11 +197,12 @@ for edge in all_orders:
         item_qty = line_item["quantity"]
         item_price = float(line_item["originalUnitPriceSet"]["shopMoney"]["amount"])
         item_variant_id = line_item["variant"]["id"].split('/')[-1] if line_item.get("variant") else None
-    
+
         orders.append({
             "extraction_date": EXTRACTION_DATE,
             "order_number": order["name"],
             "order_dt": pd.to_datetime(order["createdAt"]).date(),
+            "order_updated_at": order["updatedAt"],  # watermark pour le prochain run incrémental
             "order_total_price": total_price,
             "item_id" : item_id,
             "item_title" : item_title,
@@ -193,4 +218,4 @@ df = pd.DataFrame(orders)
 # =====================
 df.to_csv("data/shopify_orders.csv", index=False, encoding="utf-8")
 
-logger.info(f"✅ Export terminé : shopify_orders.csv ({len(df)} orders)")
+logger.info(f"✅ Export terminé : shopify_orders.csv ({len(df)} lignes, depuis {WATERMARK})")

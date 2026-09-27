@@ -20,11 +20,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STEPS = [
     "extract-products.py",
     "extract-orders.py",
-    "stats-products.py",
-    "order-calculate-benefit-cost.py",
-    "download-images.py",
-    "update-stock-status.py",
-    'publish-stock-status.py',
+    "load-shopify-to-snowflake.py",
 ]
 
 

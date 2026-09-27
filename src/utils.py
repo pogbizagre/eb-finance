@@ -157,6 +157,72 @@ def shopify_graphql(query, variables=None, max_retries=5):
 
 
 # =====================
+# SNOWFLAKE : connexion + watermark (pour les extractions incrémentales)
+# =====================
+# Utilisé par extract-orders.py, extract-products.py et
+# load-shopify-to-snowflake.py. Nécessite les variables d'environnement
+# SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD (ou SNOWFLAKE_TOKEN),
+# SNOWFLAKE_WAREHOUSE, et optionnellement SNOWFLAKE_SHOPIFY_DATABASE /
+# SNOWFLAKE_SHOPIFY_SCHEMA (défaut SHOPIFY.PUBLIC).
+
+def get_snowflake_connection():
+    """Ouvre une connexion à la base SHOPIFY, avec le rôle ROLE_SHOPIFY.
+    Le compte de service (SVC_DATA_ENG) est partagé avec le pipeline
+    paiements et a ROLE_PAIEMENTS comme rôle par défaut — on demande donc
+    ROLE_SHOPIFY explicitement à la connexion, sinon on resterait sur
+    ROLE_PAIEMENTS sans accès à SHOPIFY. À fermer par l'appelant
+    (conn.close()) une fois le travail terminé.
+
+    Authentification par clé privée RSA, comme le pipeline paiements
+    (SNOWFLAKE_PRIVATE_KEY : le contenu de la clé privée PEM, non chiffrée,
+    en variable d'environnement — pas un chemin de fichier, pour rester
+    compatible avec GitHub Actions Secrets)."""
+    import snowflake.connector
+    from cryptography.hazmat.primitives import serialization
+
+    private_key_pem = os.environ["SNOWFLAKE_PRIVATE_KEY"].encode()
+    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    private_key_der = private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    return snowflake.connector.connect(
+        account=os.environ["SNOWFLAKE_ACCOUNT"],
+        user=os.environ["SNOWFLAKE_USER"],  # SVC_DATA_ENG
+        private_key=private_key_der,
+        role=os.environ.get("SNOWFLAKE_ROLE", "ROLE_SHOPIFY"),
+        warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],  # WH_DATA_ENG (partagé)
+        database=os.environ.get("SNOWFLAKE_SHOPIFY_DATABASE", "SHOPIFY"),
+        schema=os.environ.get("SNOWFLAKE_SHOPIFY_SCHEMA", "PUBLIC"),
+    )
+
+
+def get_snowflake_watermark(conn, table, column, default="1970-01-01T00:00:00Z"):
+    """Retourne MAX(column) déjà chargé dans `table`, en ISO 8601 UTC, pour
+    servir de point de départ à une extraction incrémentale. `conn` est une
+    connexion déjà ouverte (voir get_snowflake_connection) — cette fonction
+    ne l'ouvre ni ne la ferme. Retourne `default` si la table est vide,
+    inexistante (premier run avant la création du schéma) ou si la requête
+    échoue — dans ce dernier cas on préfère une extraction complète plutôt
+    que de planter tout le run."""
+    try:
+        cur = conn.cursor()
+        cur.execute(f"SELECT MAX({column}) FROM {table}")
+        row = cur.fetchone()
+        if row and row[0] is not None:
+            return row[0].isoformat()
+        return default
+    except Exception as e:
+        logger.info(
+            f"⚠️ Impossible de récupérer le watermark ({table}.{column}), "
+            f"on repart de {default} (extraction complète) : {e}"
+        )
+        return default
+
+
+# =====================
 # CATÉGORISATION PRODUITS (pointure + catégorie via tags)
 # =====================
 # Source unique pour stats-products.py et product-descriptions/*.py — évite que

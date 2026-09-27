@@ -1,1 +1,7 @@
-export SHOPIFY_TOKEN="xxxxxxxxxxxxx"
+export SHOPIFY_CLIENT_SECRET="xxxxxxxxxxxxxxxxxxxxxxxx"
+export SHOPIFY_CLIENT_ID="xxxxxxxxxxxxxxxxxxxxxxxx"
+export SNOWFLAKE_ACCOUNT="xxxxxxxxxxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx"
+export SNOWFLAKE_USER="xxxxxx"
+export SNOWFLAKE_PRIVATE_KEY="$(cat chemin/vers/ta_cle_privee.p8)"
+export SNOWFLAKE_ROLE="xxxxxxxxxxxxxxxxxxxxxxxx"
+export SNOWFLAKE_WAREHOUSE="XXXX"
