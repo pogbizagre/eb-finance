@@ -17,10 +17,15 @@ logger = setup_logger('run-pipeline', 'run-pipeline.log')
 PYTHON = sys.executable  # le python du venv qui exécute ce script
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Chaque étape est (script, args). --full sur les deux extractions : ce
+# pipeline local exécute tout d'un coup (extraction -> Snowflake -> statut de
+# stock), donc autant repartir du catalogue/des commandes complets plutôt que
+# du watermark incrémental à chaque lancement manuel.
 STEPS = [
-    "extract-products.py",
-    "extract-orders.py",
-    "load-shopify-to-snowflake.py",
+    ("extract-products.py", ["--full"]),
+    ("extract-orders.py", ["--full"]),
+    ("update-stock-status.py", []),
+    ("publish-stock-status.py", []),
 ]
 
 
@@ -29,19 +34,20 @@ def main():
     logger.info("Démarrage du pipeline")
     logger.info("=" * 50)
 
-    for step in STEPS:
+    for step, args in STEPS:
         script_path = os.path.join(REPO_ROOT, "src", step)
-        logger.info(f"▶ {step}")
+        label = " ".join([step] + args)
+        logger.info(f"▶ {label}")
 
         result = subprocess.run(
-            [PYTHON, script_path],
+            [PYTHON, script_path, *args],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
         )
 
         if result.returncode != 0:
-            logger.info(f"❌ {step} a échoué (code {result.returncode})")
+            logger.info(f"❌ {label} a échoué (code {result.returncode})")
             if result.stderr:
                 logger.info(result.stderr[-4000:])  # dernières lignes seulement
             logger.info("=" * 50)
@@ -49,7 +55,7 @@ def main():
             logger.info("=" * 50)
             sys.exit(1)
 
-        logger.info(f"✅ {step} terminé")
+        logger.info(f"✅ {label} terminé")
 
     logger.info("=" * 50)
     logger.info("Pipeline terminé avec succès")

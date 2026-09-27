@@ -1,3 +1,4 @@
+import argparse
 import pandas as pd
 import os
 import json
@@ -11,6 +12,25 @@ from utils import (
 )
 
 # =====================
+# OPTIONS EN LIGNE DE COMMANDE
+# =====================
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--full",
+    action="store_true",
+    help=(
+        "Ignore le watermark Snowflake et force une extraction complète du "
+        "catalogue, sans se connecter à Snowflake du tout. Utilisé par le "
+        "pipeline de statut de stock (update-stock-status.py), qui a besoin "
+        "du catalogue entier à chaque run : une variation de stock ne met "
+        "pas forcément à jour le updatedAt du produit côté Shopify, donc "
+        "l'extraction incrémentale (celle utilisée pour Snowflake) manquerait "
+        "des changements de stock sur des produits par ailleurs inchangés."
+    ),
+)
+args = parser.parse_args()
+
+# =====================
 # SETUP DOSSIERS / LOGGING
 # =====================
 os.makedirs("data", exist_ok=True)
@@ -22,17 +42,24 @@ check_credentials()
 EXTRACTION_DATE = datetime.now(timezone.utc).isoformat()
 
 # =====================
-# INCRÉMENTAL : watermark = MAX(PRODUCT_UPDATED_AT) déjà chargé dans Snowflake.
-# On ne redemande à Shopify que les produits créés OU modifiés depuis ce
-# point. Si la table est vide (premier run), get_snowflake_watermark retombe
-# sur 1970-01-01 -> extraction complète.
+# INCRÉMENTAL (défaut) : watermark = MAX(PRODUCT_UPDATED_AT) déjà chargé dans
+# Snowflake. On ne redemande à Shopify que les produits créés OU modifiés
+# depuis ce point. Si la table est vide (premier run), get_snowflake_watermark
+# retombe sur 1970-01-01 -> extraction complète.
+#
+# --full : bypass total, ni watermark ni connexion Snowflake (le pipeline
+# stock n'a pas besoin de Snowflake du tout).
 # =====================
-_conn = get_snowflake_connection()
-try:
-    WATERMARK = get_snowflake_watermark(_conn, "SHOPIFY_PRODUCT_VARIANTS", "PRODUCT_UPDATED_AT")
-finally:
-    _conn.close()
-logger.info(f"Watermark de départ : {WATERMARK}")
+if args.full:
+    WATERMARK = "1970-01-01T00:00:00Z"
+    logger.info("Mode --full : extraction complète, watermark ignoré (aucune connexion Snowflake)")
+else:
+    _conn = get_snowflake_connection()
+    try:
+        WATERMARK = get_snowflake_watermark(_conn, "SHOPIFY_PRODUCT_VARIANTS", "PRODUCT_UPDATED_AT")
+    finally:
+        _conn.close()
+    logger.info(f"Watermark de départ : {WATERMARK}")
 
 PRODUCTS_FILTER = f"updated_at:>='{WATERMARK}'"
 

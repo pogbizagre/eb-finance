@@ -26,20 +26,39 @@ pipeline paiements, sauf les deux dernières) :
 
 import pandas as pd
 from snowflake.connector.pandas_tools import write_pandas
-from utils import setup_logger, check_credentials, get_snowflake_connection
+from utils import (
+    setup_logger,
+    check_credentials,
+    get_snowflake_connection,
+    add_size_standard,
+    categorize_products,
+)
 
 logger = setup_logger('load-shopify-to-snowflake', 'load-shopify-to-snowflake.log')
 
 check_credentials()
 
 
+def add_product_categorization(df):
+    """Calcule SIZE_STANDARD et PRODUCT_CATEGORY avant le chargement, pour que
+    les vues SQL Snowflake (V_PRODUCT_STATS_BY_SIZE / V_PRODUCT_STATS_BY_TAG,
+    voir snowflake_shopify_views.sql) n'aient plus qu'à agréger, sans dupliquer
+    la logique de mapping pointure/tags en SQL."""
+    df = add_size_standard(df)
+    df = categorize_products(df)
+    return df.drop(columns=["product_tags_cleaned"])  # colonne intermédiaire, pas dans le schéma
+
+
 def merge_csv_into_table(conn, csv_path, target_table, key_column,
-                          tz_columns=None, date_only_columns=None):
+                          tz_columns=None, date_only_columns=None, transform=None):
     df = pd.read_csv(csv_path)
 
     if df.empty:
         logger.info(f"ℹ️ {csv_path} est vide (rien de nouveau depuis le dernier run), rien à charger.")
         return
+
+    if transform is not None:
+        df = transform(df)
 
     # Conversion explicite plutôt que parse_dates de read_csv : ce dernier ne
     # garantit pas un dtype datetime64[ns, UTC] propre pour des colonnes avec
@@ -117,6 +136,7 @@ if __name__ == "__main__":
             key_column="VARIANT_ID",
             tz_columns=["extraction_date", "product_updated_at"],  # TIMESTAMP_TZ
             date_only_columns=["product_created_at"],               # DATE
+            transform=add_product_categorization,
         )
     finally:
         conn.close()
