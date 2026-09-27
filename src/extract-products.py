@@ -2,7 +2,13 @@ import pandas as pd
 import os
 import json
 from datetime import datetime, timezone
-from utils import setup_logger, check_credentials, shopify_graphql
+from utils import (
+    setup_logger,
+    check_credentials,
+    shopify_graphql,
+    get_snowflake_connection,
+    get_snowflake_watermark,
+)
 
 # =====================
 # SETUP DOSSIERS / LOGGING
@@ -14,6 +20,21 @@ check_credentials()
 
 # Horodatage unique de l'extraction, appliqué à toutes les lignes
 EXTRACTION_DATE = datetime.now(timezone.utc).isoformat()
+
+# =====================
+# INCRÉMENTAL : watermark = MAX(PRODUCT_UPDATED_AT) déjà chargé dans Snowflake.
+# On ne redemande à Shopify que les produits créés OU modifiés depuis ce
+# point. Si la table est vide (premier run), get_snowflake_watermark retombe
+# sur 1970-01-01 -> extraction complète.
+# =====================
+_conn = get_snowflake_connection()
+try:
+    WATERMARK = get_snowflake_watermark(_conn, "SHOPIFY_PRODUCT_VARIANTS", "PRODUCT_UPDATED_AT")
+finally:
+    _conn.close()
+logger.info(f"Watermark de départ : {WATERMARK}")
+
+PRODUCTS_FILTER = f"updated_at:>='{WATERMARK}'"
 
 # Fragment de champs partagé entre la requête principale et le backfill, pour
 # éviter que les deux listes de champs divergent (voir fetch_remaining_variants).
@@ -32,7 +53,7 @@ VARIANT_FIELDS = """
 """
 
 # =====================
-# FETCH ALL PRODUCTS WITH PAGINATION
+# FETCH PRODUCTS (créés ou modifiés depuis le watermark), AVEC PAGINATION
 # =====================
 all_products = []
 has_next_page = True
@@ -41,7 +62,7 @@ after_cursor = None
 while has_next_page:
 
     query = f"""{{
-  products(first: 250, after: {f'"{after_cursor}"' if after_cursor else 'null'}) {{
+  products(first: 250, after: {f'"{after_cursor}"' if after_cursor else 'null'}, query: "{PRODUCTS_FILTER}") {{
     edges {{
       node {{
         id
@@ -163,7 +184,7 @@ if truncated_products:
         product["variants"]["edges"].extend(extra_edges)
         logger.info(f"  ↳ {product['title']}: +{len(extra_edges)} variantes récupérées")
 
-# Save raw JSON data
+# Save raw JSON data (uniquement les produits touchés par ce run incrémental)
 with open("data/shopify_products_raw.json", "w", encoding="utf-8") as f:
     json.dump({"products": all_products}, f, indent=2, ensure_ascii=False)
 
@@ -191,7 +212,7 @@ for edge in all_products:
             "product_title": product["title"],
             "product_handle": product["handle"],
             "product_created_at": pd.to_datetime(product["createdAt"]).date(),
-            "product_updated_at": pd.to_datetime(product["updatedAt"]).date(),
+            "product_updated_at": product["updatedAt"],  # watermark pour le prochain run incrémental
             "product_type": product.get("productType"),
             "product_status": product.get("status"),
             "product_tags": ", ".join(product.get("tags", [])),
@@ -210,4 +231,4 @@ df = pd.DataFrame(products)
 # =====================
 df.to_csv("data/shopify_products.csv", index=False, encoding="utf-8")
 
-logger.info(f"✅ Export terminé : shopify_products.csv ({len(df)} variantes)")
+logger.info(f"✅ Export terminé : shopify_products.csv ({len(df)} lignes, depuis {WATERMARK})")

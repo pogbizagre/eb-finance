@@ -13,6 +13,22 @@ jobs:
     defaults:
       run:
         working-directory: eb_finance/src
+    env:
+      # Identifiants Shopify (utilisés par extract-orders.py / extract-products.py)
+      SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
+      SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
+      SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+      # Identifiants Snowflake (compte de service partagé SVC_DATA_ENG,
+      # authentification par clé RSA, rôle cloisonné ROLE_SHOPIFY).
+      # Nécessaires aux 3 étapes : les scripts d'extraction lisent aussi le
+      # watermark dans Snowflake avant d'appeler l'API Shopify.
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+      SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+      SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+      SNOWFLAKE_ROLE: ROLE_SHOPIFY
+      SNOWFLAKE_SHOPIFY_DATABASE: SHOPIFY
+      SNOWFLAKE_SHOPIFY_SCHEMA: PUBLIC
 
     steps:
       - uses: actions/checkout@v4
@@ -23,28 +39,13 @@ jobs:
 
       - name: Installer les dépendances
         run: |
-          pip install pandas requests "snowflake-connector-python[pandas]"
+          pip install pandas requests "snowflake-connector-python[pandas]" cryptography
 
-      - name: Extraire les commandes Shopify
-        env:
-          SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
-          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
-          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+      - name: Extraire les commandes Shopify (incrémental)
         run: python extract-orders.py
 
-      - name: Extraire les produits Shopify
-        env:
-          SHOPIFY_SHOP: ${{ secrets.SHOPIFY_SHOP }}
-          SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
-          SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+      - name: Extraire les produits Shopify (incrémental)
         run: python extract-products.py
 
-      - name: Charger dans Snowflake
-        env:
-          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
-          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-          SNOWFLAKE_SHOPIFY_DATABASE: SHOPIFY
-          SNOWFLAKE_SHOPIFY_SCHEMA: PUBLIC
+      - name: Charger dans Snowflake (MERGE)
         run: python load-shopify-to-snowflake.py
