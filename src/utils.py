@@ -222,6 +222,28 @@ def get_snowflake_watermark(conn, table, column, default="1970-01-01T00:00:00Z")
         return default
 
 
+def fetch_snowflake_table(conn, table):
+    """Lit `table` en entier depuis Snowflake et retourne un DataFrame avec
+    des noms de colonnes en minuscules (les tables sont en MAJUSCULES côté
+    Snowflake — voir snowflake_shopify_schema.sql — mais tous les scripts
+    d'analyse, écrits à l'origine pour les CSV d'extraction, attendent des
+    colonnes en minuscules).
+
+    Comme les tables sont maintenues par MERGE (une ligne par ITEM_ID /
+    VARIANT_ID, mise à jour en place), une lecture complète donne bien l'état
+    courant de toutes les commandes/tous les produits, pas seulement le delta
+    du dernier run incrémental — contrairement aux CSV locaux produits par
+    extract-orders.py / extract-products.py sans --full.
+
+    `conn` est une connexion déjà ouverte (voir get_snowflake_connection) —
+    cette fonction ne l'ouvre ni ne la ferme."""
+    cur = conn.cursor()
+    cur.execute(f"SELECT * FROM {table}")
+    df = cur.fetch_pandas_all()
+    df.columns = [c.lower() for c in df.columns]
+    return df
+
+
 # =====================
 # CATÉGORISATION PRODUITS (pointure + catégorie via tags)
 # =====================
