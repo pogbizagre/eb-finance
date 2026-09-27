@@ -15,6 +15,7 @@ jobs:
         working-directory: src
     env:
       # Identifiants Shopify (utilisés par extract-orders.py / extract-products.py)
+      # SHOPIFY_SHOP omis : utils.py a déjà "epiphanieboutique" comme défaut
       SHOPIFY_CLIENT_ID: ${{ secrets.SHOPIFY_CLIENT_ID }}
       SHOPIFY_CLIENT_SECRET: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
       # Identifiants Snowflake (compte de service partagé SVC_DATA_ENG,
@@ -48,3 +49,11 @@ jobs:
 
       - name: Charger dans Snowflake (MERGE)
         run: python load-shopify-to-snowflake.py
+
+      - name: Conserver les logs (débogage, 7 jours)
+        if: always() # garde les fichiers même si une étape précédente a échoué
+        uses: actions/upload-artifact@v4
+        with:
+          name: shopify-sync-logs-${{ github.run_id }}
+          path: src/logs/
+          retention-days: 7
