@@ -1,4 +1,6 @@
-"""Génère la phrase de statut de stock par pointure pour chaque chaussure active.
+"""Génère le statut de stock des produits actifs.
+
+Les chaussures sont résumées par pointure; les autres produits par quantité.
 
 Étape 1 seulement : produit un fichier d'aperçu à relire manuellement.
 Aucune écriture sur Shopify ici — ça viendra dans une étape suivante, une fois
@@ -41,6 +43,18 @@ def format_stock_sentence(sizes_qty, generated_at=None):
     return f"{sentence} (mis à jour le {timestamp})"
 
 
+def format_quantity_sentence(quantity, generated_at=None):
+    """Formate le stock total d'un produit qui n'est pas une chaussure."""
+    timestamp = (generated_at or datetime.now()).strftime("%d/%m/%Y à %H:%M")
+    quantity = int(quantity)
+
+    if quantity <= 0:
+        return f"Actuellement en rupture de stock. (mis à jour le {timestamp})"
+
+    unit = "unité" if quantity == 1 else "unités"
+    return f"Disponible en {quantity} {unit}. (mis à jour le {timestamp})"
+
+
 def main():
     logger.info("Loading products data...")
     products_df = pd.read_csv(PRODUCTS_CSV)
@@ -54,10 +68,14 @@ def main():
     is_active = products_df['product_status'].isin(['ACTIVE'])
     is_shoe = products_df['product_category'].isin(SHOE_CATEGORIES)
     has_size = products_df['size_standard'].notna()
-    shoes_df = products_df[is_active & is_shoe & has_size].copy()
+    active_products_df = products_df[is_active].copy()
+    shoes_df = active_products_df[is_shoe & has_size].copy()
+    other_products_df = active_products_df[~is_shoe].copy()
     logger.info(f"{len(shoes_df)} lignes de variantes chaussures actives")
+    logger.info(f"{len(other_products_df)} lignes de variantes d'autres produits actifs")
 
     shoes_df['variant_inventory_qty'] = shoes_df['variant_inventory_qty'].fillna(0)
+    other_products_df['variant_inventory_qty'] = other_products_df['variant_inventory_qty'].fillna(0)
 
     results = []
     for product_id, group in shoes_df.groupby('product_id'):
@@ -74,6 +92,18 @@ def main():
 
         sizes_qty = list(stock_by_size.itertuples(index=False, name=None))
         sentence = format_stock_sentence(sizes_qty)
+
+        results.append({
+            "product_id": product_id,
+            "product_handle": group['product_handle'].iloc[0],
+            "product_title": group['product_title'].iloc[0],
+            "product_category": group['product_category'].iloc[0],
+            "stock_sentence": sentence,
+        })
+
+    for product_id, group in other_products_df.groupby('product_id'):
+        quantity = group['variant_inventory_qty'].sum()
+        sentence = format_quantity_sentence(quantity)
 
         results.append({
             "product_id": product_id,
