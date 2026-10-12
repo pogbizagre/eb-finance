@@ -22,6 +22,7 @@ Usage :
 """
 
 import argparse
+from html import escape
 import re
 
 import pandas as pd
@@ -30,7 +31,7 @@ from utils import setup_logger, check_credentials, shopify_graphql
 # =====================
 # CONFIG
 # =====================
-# Fichier d'entree : genere par update-stock-status.py (une ligne par produit chaussure)
+# Fichier d'entree : genere par update-stock-status.py (une ligne par produit actif)
 PREVIEW_CSV = "data/stock_status_preview.csv"
 # Trace de chaque description remplacee (avant/apres), pour pouvoir revenir en
 # arriere manuellement si un texte publie ne convient pas.
@@ -83,7 +84,7 @@ def build_new_description(current_description, stock_sentence):
     """Insere ou remplace UNIQUEMENT le bloc de stock dans la description
     existante. Le reste de la description (ecrit a la main, ou par un futur
     script de description IA) est recopie tel quel."""
-    new_block = f"{STOCK_START}\n<p>{stock_sentence}</p>\n{STOCK_END}"
+    new_block = f"{STOCK_START}\n<p>{escape(str(stock_sentence))}</p>\n{STOCK_END}"
 
     block_already_present = STOCK_START in current_description and STOCK_END in current_description
 
