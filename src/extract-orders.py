@@ -223,7 +223,8 @@ for edge in all_orders:
         orders.append({
             "extraction_date": EXTRACTION_DATE,
             "order_number": order["name"],
-            "order_dt": pd.to_datetime(order["createdAt"]).date(),
+            # "order_dt": pd.to_datetime(order["createdAt"]).date(),
+            "order_dt": order["createdAt"],
             "order_updated_at": order["updatedAt"],  # watermark pour le prochain run incrémental
             "order_total_price": total_price,
             "item_id" : item_id,
