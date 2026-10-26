@@ -66,6 +66,7 @@ LINE_ITEM_FIELDS = """
                   id
                   title
                   quantity
+                  currentQuantity
                   originalUnitPriceSet {
                     shopMoney {
                       amount
@@ -94,6 +95,10 @@ while has_next_page:
             name
             createdAt
             updatedAt
+            currentTotalPriceSet {{ shopMoney {{ amount }} }}
+            totalRefundedSet {{ shopMoney {{ amount }} }}
+            cancelledAt
+            displayFinancialStatus
             totalPriceSet {{
               shopMoney {{
                 amount
@@ -103,7 +108,7 @@ while has_next_page:
             lineItems(first: 50) {{
               edges {{
                 node {{
-{LINE_ITEM_FIELDS}
+                  {LINE_ITEM_FIELDS}
                 }}
               }}
               pageInfo {{
@@ -211,12 +216,17 @@ for edge in all_orders:
     order = edge["node"]
 
     total_price = float(order["totalPriceSet"]["shopMoney"]["amount"])
+    order_current_total_price = float(order["currentTotalPriceSet"]["shopMoney"]["amount"])
+    order_total_refunded = float(order["totalRefundedSet"]["shopMoney"]["amount"])
+    order_cancelled_at = order["cancelledAt"]  # None si la commande n'est pas annulée
+    order_financial_status = order["displayFinancialStatus"]
 
     for line_item_edge in order["lineItems"]["edges"]:
         line_item = line_item_edge["node"]
         item_id = line_item["id"].split('/')[-1]
         item_title = line_item["title"]
         item_qty = line_item["quantity"]
+        item_current_qty = line_item["currentQuantity"]
         item_price = float(line_item["originalUnitPriceSet"]["shopMoney"]["amount"])
         item_variant_id = line_item["variant"]["id"].split('/')[-1] if line_item.get("variant") else None
 
@@ -232,6 +242,11 @@ for edge in all_orders:
             "item_qty" : item_qty,
             "item_price" : item_price,
             "item_variant_id" : item_variant_id,
+            "order_current_total_price" : order_current_total_price, 
+            "order_total_refunded" : order_total_refunded, 
+            "order_cancelled_at" : order_cancelled_at, 
+            "order_financial_status" : order_financial_status,
+            "item_current_qty" : item_current_qty,
         })
 
 df = pd.DataFrame(orders)
