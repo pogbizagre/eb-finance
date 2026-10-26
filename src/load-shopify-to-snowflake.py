@@ -126,7 +126,7 @@ if __name__ == "__main__":
             "data/shopify_orders.csv",
             "SHOPIFY_ORDER_LINE_ITEMS",
             key_column="ITEM_ID",
-            tz_columns=["extraction_date", "order_updated_at"],  # TIMESTAMP_TZ
+            tz_columns=["extraction_date", "order_updated_at", "order_cancelled_at"],  # TIMESTAMP_TZ
             date_only_columns=["order_dt"],                      # DATE
         )
         merge_csv_into_table(
