@@ -138,5 +138,13 @@ if __name__ == "__main__":
             date_only_columns=["product_created_at"],               # DATE
             transform=add_product_categorization,
         )
+        
+        merge_csv_into_table(
+            conn,
+            "data/shopify_customers.csv",
+            "SHOPIFY_CUSTOMERS",
+            key_column="CUSTOMER_ID",
+            tz_columns=["extraction_date", "customer_created_dt", "customer_updated_at"],
+        )
     finally:
         conn.close()
