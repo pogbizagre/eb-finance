@@ -47,6 +47,9 @@ jobs:
       - name: Extraire les produits Shopify (incrémental)
         run: python extract-products.py
 
+      - name: Extraire les clients Shopify (incrémental)
+        run: python extract-customers.py
+
       - name: Charger dans Snowflake (MERGE)
         run: python load-shopify-to-snowflake.py
 

@@ -99,6 +99,7 @@ while has_next_page:
             totalRefundedSet {{ shopMoney {{ amount }} }}
             cancelledAt
             displayFinancialStatus
+            customer {{ id }}
             totalPriceSet {{
               shopMoney {{
                 amount
@@ -220,6 +221,8 @@ for edge in all_orders:
     order_total_refunded = float(order["totalRefundedSet"]["shopMoney"]["amount"])
     order_cancelled_at = order["cancelledAt"]  # None si la commande n'est pas annulée
     order_financial_status = order["displayFinancialStatus"]
+    customer = order.get("customer")
+    customer_id = customer["id"].split('/')[-1] if customer else None
 
     for line_item_edge in order["lineItems"]["edges"]:
         line_item = line_item_edge["node"]
@@ -233,7 +236,7 @@ for edge in all_orders:
         orders.append({
             "extraction_date": EXTRACTION_DATE,
             "order_number": order["name"],
-            # "order_dt": pd.to_datetime(order["createdAt"]).date(),
+            "customer_id": customer_id,
             "order_dt": order["createdAt"],
             "order_updated_at": order["updatedAt"],  # watermark pour le prochain run incrémental
             "order_total_price": total_price,
